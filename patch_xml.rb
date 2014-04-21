@@ -30,6 +30,11 @@ opt_parser = OptionParser.new do |opts|
 	opts.on("--dbname DBNAME", "Override dbname option") do |v|
 		$options[:dbname] = v
 	end
+
+	opts.on("-h", "--help", "Show help") do
+		$stderr.puts opt_parser.help
+		exit 1
+	end
 end
 
 opt_parser.parse!

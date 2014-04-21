@@ -1,0 +1,4 @@
+#!/bin/sh -e
+
+cd "`dirname $0`"
+bundle exec ruby patch_xml.rb $@
