@@ -63,6 +63,7 @@ doc.xpath('/Map/Layer/Datasource').each { |datasource|
 	}
 	query = to_text(datasource.xpath('./Parameter[@name="table"]').first)
 	query = query.gsub /[a-zA-Z0-9_"']+[[:space:]]*&&[[:space:]]*!bbox!/, "true"
+	geometry_field = to_text(datasource.xpath('./Parameter[@name="geometry_field"]').first)
 
 	$stderr.puts "-- #{k}"
 
@@ -73,6 +74,8 @@ doc.xpath('/Map/Layer/Datasource').each { |datasource|
 	conn.exec("DROP TABLE IF EXISTS #{table_name}")
 
 	conn.exec("SELECT * INTO TABLE #{table_name} FROM #{query}")
+
+	conn.exec("CREATE INDEX #{table_name}_#{geometry_field}_idx ON #{table_name} USING gist(#{geometry_field})")
 
 	new_query = "(SELECT * FROM #{table_name}) as q_#{k}"
 
