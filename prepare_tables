@@ -62,7 +62,9 @@ doc.xpath('/Map/Layer/Datasource').each { |datasource|
 		:dbname => to_text(datasource.xpath('./Parameter[@name="dbname"]').first)
 	}
 	query = to_text(datasource.xpath('./Parameter[@name="table"]').first)
-	query = query.gsub /[a-zA-Z0-9_"']+[[:space:]]*&&[[:space:]]*!bbox!/, "true"
+	#query = query.gsub /[a-zA-Z0-9_"']+[[:space:]]*&&[[:space:]]*!bbox!/, "true"
+	next if query.index('!bbox!')
+
 	geometry_field = to_text(datasource.xpath('./Parameter[@name="geometry_field"]').first)
 
 	$stderr.puts "-- #{k}"
@@ -76,6 +78,8 @@ doc.xpath('/Map/Layer/Datasource').each { |datasource|
 	conn.exec("SELECT * INTO TABLE #{table_name} FROM #{query}")
 
 	conn.exec("CREATE INDEX #{table_name}_#{geometry_field}_idx ON #{table_name} USING gist(#{geometry_field})")
+	conn.exec("CLUSTER #{table_name} USING #{table_name}_#{geometry_field}_idx")
+	conn.exec("ANALYZE #{table_name}")
 
 	new_query = "(SELECT * FROM #{table_name}) as q_#{k}"
 
