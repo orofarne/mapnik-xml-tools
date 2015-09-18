@@ -7,6 +7,8 @@ require 'nokogiri'
 require 'pg'
 
 $options = {}
+$options[:xml_only] = false
+
 opt_parser = OptionParser.new do |opts|
 	opts.banner = "Usage: prepare_tables [options]"
 
@@ -18,6 +20,18 @@ opt_parser = OptionParser.new do |opts|
 		$options[:output] = v
 	end
 
+	opts.on("-x", "--xml_only", "Write only output XML style file") do
+		$options[:xml_only] = true
+	end
+
+	opts.on("-l", "--skip_layer LAYER1,LAYER2,...", Array, "Skip LAYERS") do |v|
+		$options[:skip_layers] = v
+	end
+
+	opts.on("-s", "--start_from QUERY_NUMBER", "Start from QUERY_NUMBER") do |v|
+		$options[:start_from] = v.to_i
+	end
+
 	opts.on("-h", "--help", "Show help") do
 		$stderr.puts opt_parser.help
 		exit 1
@@ -25,6 +39,8 @@ opt_parser = OptionParser.new do |opts|
 end
 
 opt_parser.parse!
+
+$options[:start_from]=0 if $options[:start_from].nil?
 
 if $options[:input].nil? then
 	$stderr.puts opt_parser.help
@@ -50,44 +66,57 @@ f.close
 
 k = 0
 
-doc.xpath('/Map/Layer/Datasource').each { |datasource|
-	next if 'postgis' != to_text(
-		datasource.xpath('./Parameter[@name="type"]').first
-	)
+doc.xpath('/Map/Layer').each { |layer|
+	next if $options[:skip_layers].include? layer.attr("name")
 
-	qopts = {
-		:host => to_text(datasource.xpath('./Parameter[@name="host"]').first),
-		:user => to_text(datasource.xpath('./Parameter[@name="user"]').first),
-		:password => to_text(datasource.xpath('./Parameter[@name="password"]').first),
-		:dbname => to_text(datasource.xpath('./Parameter[@name="dbname"]').first)
+	layer.xpath('./Datasource').each { |datasource|
+		next if 'postgis' != to_text(
+			datasource.xpath('./Parameter[@name="type"]').first
+		)
+
+		if k < $options[:start_from] then
+			k +=1
+			next
+		end
+
+		qopts = {
+			:host => to_text(datasource.xpath('./Parameter[@name="host"]').first),
+			:user => to_text(datasource.xpath('./Parameter[@name="user"]').first),
+			:password => to_text(datasource.xpath('./Parameter[@name="password"]').first),
+			:dbname => to_text(datasource.xpath('./Parameter[@name="dbname"]').first)
+		}
+		query = to_text(datasource.xpath('./Parameter[@name="table"]').first)
+		#query = query.gsub /[a-zA-Z0-9_"']+[[:space:]]*&&[[:space:]]*!bbox!/, "true"
+		next if query.index('!bbox!')
+
+		geometry_field = to_text(datasource.xpath('./Parameter[@name="geometry_field"]').first)
+
+		$stderr.puts "-- #{k}"
+
+		table_name = "query_#{k}"
+
+		unless $options[:xml_only]
+			conn = PGconn.open(qopts)
+
+			conn.exec("DROP TABLE IF EXISTS #{table_name}")
+
+			conn.exec("SELECT * INTO TABLE #{table_name} FROM #{query}")
+
+			conn.exec("CREATE INDEX #{table_name}_#{geometry_field}_idx ON #{table_name} USING gist(#{geometry_field})")
+			conn.exec("CLUSTER #{table_name} USING #{table_name}_#{geometry_field}_idx")
+			conn.exec("ANALYZE #{table_name}")
+			conn.close
+		end
+
+		new_query = "(SELECT * FROM #{table_name}) as q_#{k}"
+
+		datasource.xpath('./Parameter[@name="table"]').each { |v|
+			set_val(v, new_query)
+		}
+
+		k += 1
 	}
-	query = to_text(datasource.xpath('./Parameter[@name="table"]').first)
-	#query = query.gsub /[a-zA-Z0-9_"']+[[:space:]]*&&[[:space:]]*!bbox!/, "true"
-	next if query.index('!bbox!')
 
-	geometry_field = to_text(datasource.xpath('./Parameter[@name="geometry_field"]').first)
-
-	$stderr.puts "-- #{k}"
-
-	conn = PGconn.open(qopts)
-
-	table_name = "query_#{k}"
-
-	conn.exec("DROP TABLE IF EXISTS #{table_name}")
-
-	conn.exec("SELECT * INTO TABLE #{table_name} FROM #{query}")
-
-	conn.exec("CREATE INDEX #{table_name}_#{geometry_field}_idx ON #{table_name} USING gist(#{geometry_field})")
-	conn.exec("CLUSTER #{table_name} USING #{table_name}_#{geometry_field}_idx")
-	conn.exec("ANALYZE #{table_name}")
-
-	new_query = "(SELECT * FROM #{table_name}) as q_#{k}"
-
-	datasource.xpath('./Parameter[@name="table"]').each { |v|
-		set_val(v, new_query)
-	}
-
-	k += 1
 }
 
 out_xml = doc.to_xhtml(:indent => 4, :encoding => 'UTF-8')
